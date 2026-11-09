@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+// Importamos el motor heurístico desde el archivo del mismo nivel
+import { PSOGWOOptimizer } from "./optimizer";
 
 type View = "missions" | "new-task" | "focus" | "loading" | "loaded";
 
@@ -277,7 +279,16 @@ function Toggle({
   );
 }
 
-function NewTask({ go, onCreated }: { go: (view: View) => void; onCreated: () => void }) {
+interface NewTaskPayload {
+  name: string;
+  available: number;
+  execution: number;
+  score: number;
+  group: boolean;
+  bonus: boolean;
+}
+
+function NewTask({ go, onCreated }: { go: (view: View) => void; onCreated: (payload: NewTaskPayload) => void }) {
   const [name, setName] = useState("");
   const [available, setAvailable] = useState("10");
   const [execution, setExecution] = useState("8");
@@ -293,7 +304,17 @@ function NewTask({ go, onCreated }: { go: (view: View) => void; onCreated: () =>
       return;
     }
     setSuccess(true);
-    window.setTimeout(onCreated, 800);
+    
+    window.setTimeout(() => {
+      onCreated({
+        name,
+        available: Number(available),
+        execution: Number(execution),
+        score: Number(score),
+        group,
+        bonus,
+      });
+    }, 800);
   };
 
   return (
@@ -414,7 +435,6 @@ function Focus({ go }: { go: (view: View) => void }) {
                 ? "“La forma más rápida de hacer muchas cosas es hacer solo una a la vez.”"
                 : "Selecciona una misión para iniciar"}
             </h1>
-            {running && <strong>mozart</strong>}
             <p>Completa tus sesiones de estudio para ganar XP extra</p>
           </div>
           <div className={`timer-face ${running ? "timer-face--running" : ""}`}>
@@ -514,13 +534,23 @@ export default function App() {
       {view === "new-task" && (
         <NewTask
           go={go}
-          onCreated={() => {
+          onCreated={(payload) => {
+            const resultadoHeuristico = PSOGWOOptimizer.calcularPrioridadYRecompensa({
+              tiempoDisponible: payload.available,
+              tiempoEjecucion: payload.execution,
+              puntajeBase: payload.score,
+              esGrupal: payload.group,
+              tieneBonus: payload.bonus,
+            });
+
             setMissions((items) => [
               {
                 id: `T${items.length + 1}`,
-                title: "Informe Final Complejidad de Algoritmo",
-                time: "10h restantes",
-                score: "150",
+                title: payload.name,
+                time: `${payload.available}h restantes`,
+                score: resultadoHeuristico.puntajeFinal,
+                group: payload.group,
+                bonus: payload.bonus,
               },
               ...items,
             ]);

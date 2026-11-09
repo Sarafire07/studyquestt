@@ -1,0 +1,129 @@
+// src/services/optimizer.ts
+
+export interface TaskInput {
+  tiempoDisponible: number; // hrs restantes
+  tiempoEjecucion: number;  // hrs estimadas de trabajo
+  puntajeBase: number;      // pts de la tarea
+  esGrupal: boolean;
+  tieneBonus: boolean;
+}
+
+export class PSOGWOOptimizer {
+  /**
+   * Ejecuta una versión optimizada y ligera de PSO-GWO en TypeScript
+   * para hallar el índice de prioridad óptimo y escalar la recompensa.
+   */
+  public static calcularPrioridadYRecompensa(input: TaskInput) {
+    // ---- 1. PREPROCESAMIENTO Y VARIABLES DE CONTROL ----
+    // Definimos dimensiones del problema: [PesoUrgencia, PesoComplejidad, PesoEsfuerzo]
+    const dimensiones = 3;
+    const numParticulas = 15;
+    const maxIteraciones = 20;
+
+    // Normalización de variables de entrada para la función objetivo
+    const razonTiempo = input.tiempoEjecucion / (input.tiempoDisponible || 1);
+    const urgencia = Math.min(1, 1 / (input.tiempoDisponible || 1)); // Menos tiempo disponible = más urgencia
+    const complejidad = Math.min(1, razonTiempo); // Si toma mucho tiempo respecto al disponible, es compleja
+
+    // ---- 2. FUNCIÓN OBJETIVO (FITNESS) ----
+    // Evalúa qué tan equilibrada y crítica es una combinación de pesos (posición)
+    const calcularFitness = (posicion: number[]): number => {
+      const [wUrgencia, wComplejidad, wEsfuerzo] = posicion;
+      // Queremos maximizar la atención en tareas urgentes y complejas sin desbordar los límites
+      const scorePrioridad = (wUrgencia * urgencia) + (wComplejidad * complejidad) + (wEsfuerzo * (input.puntajeBase / 150));
+      return scorePrioridad;
+    };
+
+    // ---- 3. INICIALIZACIÓN DE LA MANADA / ENJAMBRE ----
+    let particulas = Array.from({ length: numParticulas }, () => ({
+      posicion: Array.from({ length: dimensiones }, () => Math.random()),
+      velocidad: Array.from({ length: dimensiones }, () => 0),
+      pBestPos: [] as number[],
+      pBestFitness: -Infinity,
+    }));
+
+    // Variables de jerarquía GWO (Lobo Gris)
+    let alphaPos = [] as number[], alphaFitness = -Infinity;
+    let betaPos = [] as number[], betaFitness = -Infinity;
+    let deltaPos = [] as number[], deltaFitness = -Infinity;
+
+    // ---- 4. BUCLE HÍBRIDO DE OPTIMIZACIÓN ----
+    for (let iter = 0; iter < maxIteraciones; iter++) {
+      // Coeficiente de decrecimiento GWO (a decrece linealmente de 2 a 0)
+      const a = 2 * (1 - iter / maxIteraciones);
+      // Coeficientes PSO
+      const wPSO = 0.5 + Math.random() / 2; // Inercia
+      const c1 = 1.5, c2 = 1.5;
+
+      // Evaluar Fitness y actualizar jerarquías de Lobos (GWO) / Memoria Individual (PSO)
+      for (let p of particulas) {
+        const fitness = calcularFitness(p.posicion);
+
+        // Actualización PSO personal
+        if (fitness > p.pBestFitness) {
+          p.pBestFitness = fitness;
+          p.pBestPos = [...p.posicion];
+        }
+
+        // Actualización GWO jerárquica
+        if (fitness > alphaFitness) {
+          deltaFitness = betaFitness; deltaPos = [...betaPos];
+          betaFitness = alphaFitness; betaPos = [...alphaPos];
+          alphaFitness = fitness; alphaPos = [...p.posicion];
+        } else if (fitness > betaFitness) {
+          deltaFitness = betaFitness; deltaPos = [...betaPos];
+          betaFitness = fitness; betaPos = [...p.posicion];
+        } else if (fitness > deltaFitness) {
+          deltaFitness = fitness; deltaPos = [...p.posicion];
+        }
+      }
+
+      // Actualizar Posiciones y Velocidades combinando PSO y GWO
+      for (let p of particulas) {
+        for (let d = 0; d < dimensiones; d++) {
+          // Componente GWO: Caza guiada por Alpha, Beta y Delta
+          const r1 = Math.random(), r2 = Math.random();
+          const A1 = 2 * a * r1 - a, C1 = 2 * r2;
+          const D_alpha = Math.abs(C1 * alphaPos[d] - p.posicion[d]);
+          const X1 = alphaPos[d] - A1 * D_alpha;
+
+          const r3 = Math.random(), r4 = Math.random();
+          const A2 = 2 * a * r3 - a, C2 = 2 * r4;
+          const D_beta = Math.abs(C2 * betaPos[d] - p.posicion[d]);
+          const X2 = betaPos[d] - A2 * D_beta;
+
+          const X_gwo = (X1 + X2) / 2; // Vector sugerido por el liderazgo GWO
+
+          // Componente PSO: Velocidad basada en el histórico global y personal
+          p.velocidad[d] = wPSO * p.velocidad[d] +
+            c1 * Math.random() * (p.pBestPos[d] - p.posicion[d]) +
+            c2 * Math.random() * (alphaPos[d] - p.posicion[d]);
+
+          // Hibridación: Combinación mutua de movimiento
+          p.posicion[d] = 0.6 * (p.posicion[d] + p.velocidad[d]) + 0.4 * X_gwo;
+
+          // Restricción de espacio de búsqueda (Límites entre 0 y 1 para los pesos)
+          p.posicion[d] = Math.max(0, Math.min(1, p.posicion[d]));
+        }
+      }
+    }
+
+    // ---- 5. CÁLCULO FINAL DE PRIORIDAD Y ESCALAMIENTO ----
+    // El mejor fitness encontrado por el Lobo Alpha representa el coeficiente de prioridad óptimo
+    const factorPrioridadOptimo = Math.max(0.1, Math.min(1, alphaFitness));
+    
+    // Multiplicadores base del negocio definidos en tu frontend
+    let multiplicador = 1.0;
+    if (input.esGrupal) multiplicador *= 1.5;
+    if (input.tieneBonus) multiplicador *= 1.5;
+
+    // Escalamiento dinámico: Puntaje modificado en base a la dificultad metaheurística calculada
+    const puntajeBaseCalculado = input.puntajeBase * (1 + factorPrioridadOptimo);
+    const puntajeFinalSujetoAMultiplicadores = puntajeBaseCalculado * multiplicador;
+
+    return {
+      prioridadCalculada: factorPrioridadOptimo, // Coeficiente entre 0 y 1
+      puntajeFinal: puntajeFinalSujetoAMultiplicadores.toFixed(1)
+    };
+  }
+}
