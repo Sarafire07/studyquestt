@@ -493,21 +493,27 @@ function FileStatus({ loaded, go }: { loaded: boolean; go: (view: View) => void 
 
 export default function App() {
   const [view, setView] = useState<View>("missions");
-  const [missions, setMissions] = useState(initialMissions);
-  const [completed, setCompleted] = useState(0);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // === CAMBIO 1: Inicialización leyendo desde localStorage ===
+  const [missions, setMissions] = useState<Mission[]>(() => {
+    const savedMissions = localStorage.getItem("sq_missions");
+    return savedMissions ? JSON.parse(savedMissions) : initialMissions;
+  });
+
+  const [completed, setCompleted] = useState<number>(() => {
+    const savedCompleted = localStorage.getItem("sq_completed");
+    return savedCompleted ? Number(savedCompleted) : 0;
+  });
+
+  // === CAMBIO 2: Guardado automático cuando los estados cambian ===
   useEffect(() => {
-    const complete = (event: Event) => {
-      const id = (event as CustomEvent<string>).detail;
-      setCompleted((value) => value + 1);
-      window.setTimeout(() => {
-        setMissions((items) => items.filter((item) => item.id !== id));
-      }, 350);
-    };
-    window.addEventListener("complete-mission", complete);
-    return () => window.removeEventListener("complete-mission", complete);
-  }, []);
+    localStorage.setItem("sq_missions", JSON.stringify(missions));
+  }, [missions]);
+
+  useEffect(() => {
+    localStorage.setItem("sq_completed", String(completed));
+  }, [completed]);
 
   const go = (next: View) => setView(next);
 
